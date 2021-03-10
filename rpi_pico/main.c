@@ -1,9 +1,13 @@
+#include <stdio.h>
 
+
+// SD interface pins
 #define SD_MISO     0
 #define SD_CS       1
 #define SD_CLK      2
 #define SD_MOSI     3
 
+// SCSI data bus pins
 #define DB0         4
 #define DB1         5
 #define DB2         6
@@ -14,6 +18,7 @@
 #define DB7         11
 #define DBP         12
 
+// SCSI communication pins
 #define ATN         13
 #define BSY         14
 #define ACK         15
@@ -24,9 +29,14 @@
 #define REQ         20
 #define IO          21
 
+// Pin to enable active termination
 #define TERM_EN     22
 
+// Pin for optional LED
 #define ACT_LED     26
+
+#define VERSION "1.0.0"
+#define LOG_FILENAME "LOG.txt"
 
 
 #define DEBUG            0      // 0:No debug information output
@@ -86,22 +96,22 @@ SdFs SD;
 #define LED_OFF()      gpio_write(ACT_LED, low);
 
 // Virtual pin (Arduio compatibility is slow, so make it MCU-dependent)
-#define PA(BIT)       (BIT)
-#define PB(BIT)       (BIT+16)
+//#define PA(BIT)       (BIT)
+//#define PB(BIT)       (BIT+16)
 // Virtual pin decoding
 #define GPIOREG(VPIN)    ((VPIN)>=16?PBREG:PAREG)
 #define BITMASK(VPIN) (1<<((VPIN)&15))
 
-#define vATN       PA(8)      // SCSI:ATN
-#define vBSY       PA(9)      // SCSI:BSY
-#define vACK       PA(10)     // SCSI:ACK
-#define vRST       PA(15)     // SCSI:RST
-#define vMSG       PB(3)      // SCSI:MSG
-#define vSEL       PB(4)      // SCSI:SEL
-#define vCD        PB(5)      // SCSI:C/D
-#define vREQ       PB(6)      // SCSI:REQ
-#define vIO        PB(7)      // SCSI:I/O
-#define vSD_CS     PA(4)      // SDCARD:CS
+//#define vATN       PA(8)      // SCSI:ATN
+//#define vBSY       PA(9)      // SCSI:BSY
+//#define vACK       PA(10)     // SCSI:ACK
+//#define vRST       PA(15)     // SCSI:RST
+//#define vMSG       PB(3)      // SCSI:MSG
+//#define vSEL       PB(4)      // SCSI:SEL
+//#define vCD        PB(5)      // SCSI:C/D
+//#define vREQ       PB(6)      // SCSI:REQ
+//#define vIO        PB(7)      // SCSI:I/O
+//#define vSD_CS     PA(4)      // SDCARD:CS
 
 // SCSI output pin control: opendrain active LOW (direct pin drive)
 #define SCSI_OUT(VPIN,ACTIVE) { GPIOREG(VPIN)->BSRR = BITMASK(VPIN)<<((ACTIVE)?16:0); }
@@ -128,7 +138,7 @@ SdFs SD;
 // BSY,REQ,MSG,CD,IO Turn on the output (no change required for OD)
 #define SCSI_TARGET_ACTIVE()   { }
 // BSY,REQ,MSG,CD,IO Turn off output, BSY is the last input
-#define SCSI_TARGET_INACTIVE() { SCSI_OUT(vREQ,inactive); SCSI_OUT(vMSG,inactive); SCSI_OUT(vCD,inactive);SCSI_OUT(vIO,inactive); SCSI_OUT(vBSY,inactive); gpio_mode(BSY, GPIO_INPUT_PU); }
+#define SCSI_TARGET_INACTIVE() { SCSI_OUT(REQ,inactive); SCSI_OUT(MSG,inactive); SCSI_OUT(CD,inactive);SCSI_OUT(IO,inactive); SCSI_OUT(BSY,inactive); gpio_mode(BSY, GPIO_INPUT_PU); }
 
 // HDDiamge file
 #define HDIMG_ID_POS  2                 // Position to embed ID number
@@ -211,8 +221,6 @@ static const byte db2scsiid[256]={
 #endif
 
 // Log File
-#define VERSION "1.0-b"
-#define LOG_FILENAME "LOG.txt"
 FsFile LOG_FILE;
 
 // SCSI Drive Vendor information
@@ -353,10 +361,10 @@ void setup()
   gpio_mode(RST, GPIO_INPUT_PU);
   gpio_mode(SEL, GPIO_INPUT_PU);
   // Output port
-  gpio_mode(MSG, GPIO_OUTPUT_OD);
-  gpio_mode(CD,  GPIO_OUTPUT_OD);
-  gpio_mode(REQ, GPIO_OUTPUT_OD);
-  gpio_mode(IO,  GPIO_OUTPUT_OD);
+//   gpio_mode(MSG, GPIO_OUTPUT_OD);
+//   gpio_mode(CD,  GPIO_OUTPUT_OD);
+//   gpio_mode(REQ, GPIO_OUTPUT_OD);
+//   gpio_mode(IO,  GPIO_OUTPUT_OD);
   // Turn off the output port
   SCSI_TARGET_INACTIVE()
 
@@ -436,7 +444,8 @@ void setup()
  */
 void initFileLog() {
   LOG_FILE = SD.open(LOG_FILENAME, O_WRONLY | O_CREAT);
-  LOG_FILE.println("BlueSCSI <-> SD - https://github.com/erichelgeson/BlueSCSI");
+  LOG_FILE.println("Pico SCSI Emulator - https://github.com/SuperSVGA/SCSIEmu/tree/main/rpi_pico");
+  LOG_FILE.println("Based on https://github.com/erichelgeson/BlueSCSI");
   LOG_FILE.print("VERSION: ");
   LOG_FILE.println(VERSION);
   LOG_FILE.print("DEBUG:");
@@ -493,9 +502,9 @@ void finalizeFileLog() {
 void onFalseInit(void)
 {
   while(true) {
-    gpio_write(LED, high);
+    gpio_write(ACT_LED, high);
     delay(500); 
-    gpio_write(LED, low);
+    gpio_write(ACT_LED, low);
     delay(500);
   }
 }
@@ -533,12 +542,12 @@ void onBusReset(void)
  */
 inline byte readHandshake(void)
 {
-  SCSI_OUT(vREQ,active)
+  SCSI_OUT(REQ,active)
   //SCSI_DB_INPUT()
-  while(!SCSI_IN(vACK)) { if(m_isBusReset) return 0; }
+  while(!SCSI_IN(ACK)) { if(m_isBusReset) return 0; }
   byte r = readIO();
-  SCSI_OUT(vREQ,inactive)
-  while( SCSI_IN(vACK)) { if(m_isBusReset) return 0; }
+  SCSI_OUT(REQ,inactive)
+  while( SCSI_IN(ACK)) { if(m_isBusReset) return 0; }
   return r;  
 }
 
@@ -550,17 +559,17 @@ inline void writeHandshake(byte d)
   GPIOB->regs->BSRR = db_bsrr[d]; // setup DB,DBP (160ns)
   SCSI_DB_OUTPUT() // (180ns)
   // ACK.Fall to DB output delay 100ns(MAX)  (DTC-510B)
-  SCSI_OUT(vREQ,inactive) // setup wait (30ns)
-  SCSI_OUT(vREQ,inactive) // setup wait (30ns)
-  SCSI_OUT(vREQ,inactive) // setup wait (30ns)
-  SCSI_OUT(vREQ,active)   // (30ns)
-  //while(!SCSI_IN(vACK)) { if(m_isBusReset){ SCSI_DB_INPUT() return; }}
+  SCSI_OUT(REQ,inactive) // setup wait (30ns)
+  SCSI_OUT(REQ,inactive) // setup wait (30ns)
+  SCSI_OUT(REQ,inactive) // setup wait (30ns)
+  SCSI_OUT(REQ,active)   // (30ns)
+  //while(!SCSI_IN(ACK)) { if(m_isBusReset){ SCSI_DB_INPUT() return; }}
   while(!m_isBusReset && !SCSI_IN(vACK));
   // ACK.Fall to REQ.Raise delay 500ns(typ.) (DTC-510B)
   GPIOB->regs->BSRR = DBP(0xff);  // DB=0xFF , SCSI_OUT(vREQ,inactive)
   // REQ.Raise to DB hold time 0ns
   SCSI_DB_INPUT() // (150ns)
-  while( SCSI_IN(vACK)) { if(m_isBusReset) return; }
+  while( SCSI_IN(ACK)) { if(m_isBusReset) return; }
 }
 
 /*
@@ -570,9 +579,9 @@ inline void writeHandshake(byte d)
 void writeDataPhase(int len, const byte* p)
 {
   LOGN("DATAIN PHASE");
-  SCSI_OUT(vMSG,inactive) //  gpio_write(MSG, low);
-  SCSI_OUT(vCD ,inactive) //  gpio_write(CD, low);
-  SCSI_OUT(vIO ,  active) //  gpio_write(IO, high);
+  SCSI_OUT(MSG,inactive) //  gpio_write(MSG, low);
+  SCSI_OUT(CD ,inactive) //  gpio_write(CD, low);
+  SCSI_OUT(IO ,  active) //  gpio_write(IO, high);
   for (int i = 0; i < len; i++) {
     if(m_isBusReset) {
       return;
@@ -591,9 +600,9 @@ void writeDataPhaseSD(uint32_t adds, uint32_t len)
   uint32_t pos = adds * m_img->m_blocksize;
   m_img->m_file.seek(pos);
 
-  SCSI_OUT(vMSG,inactive) //  gpio_write(MSG, low);
-  SCSI_OUT(vCD ,inactive) //  gpio_write(CD, low);
-  SCSI_OUT(vIO ,  active) //  gpio_write(IO, high);
+  SCSI_OUT(MSG,inactive) //  gpio_write(MSG, low);
+  SCSI_OUT(CD ,inactive) //  gpio_write(CD, low);
+  SCSI_OUT(IO ,  active) //  gpio_write(IO, high);
 
   for(uint32_t i = 0; i < len; i++) {
       // Asynchronous reads will make it faster ...
@@ -703,9 +712,9 @@ void writeDataPhaseSD(uint32_t adds, uint32_t len)
 void readDataPhase(int len, byte* p)
 {
   LOGN("DATAOUT PHASE");
-  SCSI_OUT(vMSG,inactive) //  gpio_write(MSG, low);
-  SCSI_OUT(vCD ,inactive) //  gpio_write(CD, low);
-  SCSI_OUT(vIO ,inactive) //  gpio_write(IO, low);
+  SCSI_OUT(MSG,inactive) //  gpio_write(MSG, low);
+  SCSI_OUT(CD ,inactive) //  gpio_write(CD, low);
+  SCSI_OUT(IO ,inactive) //  gpio_write(IO, low);
   for(uint32_t i = 0; i < len; i++)
     p[i] = readHandshake();
 }
@@ -719,9 +728,9 @@ void readDataPhaseSD(uint32_t adds, uint32_t len)
   LOGN("DATAOUT PHASE(SD)");
   uint32_t pos = adds * m_img->m_blocksize;
   m_img->m_file.seek(pos);
-  SCSI_OUT(vMSG,inactive) //  gpio_write(MSG, low);
-  SCSI_OUT(vCD ,inactive) //  gpio_write(CD, low);
-  SCSI_OUT(vIO ,inactive) //  gpio_write(IO, low);
+  SCSI_OUT(MSG,inactive) //  gpio_write(MSG, low);
+  SCSI_OUT(CD ,inactive) //  gpio_write(CD, low);
+  SCSI_OUT(IO ,inactive) //  gpio_write(IO, low);
   for(uint32_t i = 0; i < len; i++) {
 #if WRITE_SPEED_OPTIMIZE
   register byte *dstptr= m_buf;
@@ -1063,9 +1072,9 @@ void MsgIn2(int msg)
 void MsgOut2()
 {
   LOGN("MsgOut2");
-  SCSI_OUT(vMSG,  active) //  gpio_write(MSG, high);
-  SCSI_OUT(vCD ,  active) //  gpio_write(CD, high);
-  SCSI_OUT(vIO ,inactive) //  gpio_write(IO, low);
+  SCSI_OUT(MSG,  active) //  gpio_write(MSG, high);
+  SCSI_OUT(CD ,  active) //  gpio_write(CD, high);
+  SCSI_OUT(IO ,inactive) //  gpio_write(IO, low);
   m_msb[m_msc] = readHandshake();
   m_msc++;
   m_msc %= 256;
@@ -1164,9 +1173,9 @@ void loop()
   }
 
   LOG("Command:");
-  SCSI_OUT(vMSG,inactive) // gpio_write(MSG, low);
-  SCSI_OUT(vCD ,  active) // gpio_write(CD, high);
-  SCSI_OUT(vIO ,inactive) // gpio_write(IO, low);
+  SCSI_OUT(MSG,inactive) // gpio_write(MSG, low);
+  SCSI_OUT(CD ,  active) // gpio_write(CD, high);
+  SCSI_OUT(IO ,inactive) // gpio_write(IO, low);
   
   int len;
   byte cmd[12];
@@ -1288,18 +1297,18 @@ void loop()
   }
 
   LOGN("Sts");
-  SCSI_OUT(vMSG,inactive) // gpio_write(MSG, low);
-  SCSI_OUT(vCD ,  active) // gpio_write(CD, high);
-  SCSI_OUT(vIO ,  active) // gpio_write(IO, high);
+  SCSI_OUT(MSG,inactive) // gpio_write(MSG, low);
+  SCSI_OUT(CD ,  active) // gpio_write(CD, high);
+  SCSI_OUT(IO ,  active) // gpio_write(IO, high);
   writeHandshake(m_sts);
   if(m_isBusReset) {
      goto BusFree;
   }
 
   LOGN("MsgIn");
-  SCSI_OUT(vMSG,  active) // gpio_write(MSG, high);
-  SCSI_OUT(vCD ,  active) // gpio_write(CD, high);
-  SCSI_OUT(vIO ,  active) // gpio_write(IO, high);
+  SCSI_OUT(MSG,  active) // gpio_write(MSG, high);
+  SCSI_OUT(CD ,  active) // gpio_write(CD, high);
+  SCSI_OUT(IO ,  active) // gpio_write(IO, high);
   writeHandshake(m_msg);
 
 BusFree:
@@ -1318,6 +1327,10 @@ int main() {
     gpio_set_function(SD_CS, GPIO_FUNC_SPI);
     gpio_set_function(SD_CLK, GPIO_FUNC_SPI);
 
+    gpio_set_dir(MSG, GPIO_OUT);
+    gpio_set_dir(CD, GPIO_OUT);
+    gpio_set_dir(REQ, GPIO_OUT);
+    gpio_set_dir(IO, GPIO_OUT);
+
     gpio_set_dir(ACT_LED, GPIO_OUT);
 }
-
